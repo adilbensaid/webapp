@@ -1,26 +1,65 @@
-from flask import Flask, request, render_template, send_file
+from flask import Flask, render_template, request, jsonify, send_file
 import subprocess
+import sys
 import os
-import pandas as pd
-from urllib.parse import urlparse
+from multiprocessing import Process
+from scrapy.crawler import CrawlerProcess
+from spider import EnlacesSpider  # Importamos el Spider desde spider.py
+import tempfile
+import shutil
 
+# Función para comprobar e instalar paquetes
+def check_and_install(package):
+    try:
+        __import__(package)
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+# Verificar que dependencias necesarias están instaladas
+check_and_install("scrapy")
+check_and_install("pandas")
+check_and_install("openpyxl")
+
+# Crear la aplicación Flask
 app = Flask(__name__)
 
-@app.route('/', methods=['GET', 'POST'])
-def form():
-    if request.method == 'POST':
-        url = request.form.get('url')
-        if url:
-            # Ejecutar el spider con la URL dada
-            os.environ['SCRAPY_URL'] = url  # Pasar URL como variable de entorno
-            subprocess.run(['scrapy', 'crawl', 'enlaces'])
+# Ruta principal
+@app.route('/')
+def index():
+    return render_template('index.html')  # Crear un archivo HTML básico para la interfaz
 
-            # Verificar si el archivo Excel fue creado
-            if os.path.exists('enlaces_extraidos.xlsx'):
-                return send_file('enlaces_extraidos.xlsx', as_attachment=True)
-        return 'Hubo un problema al ejecutar el spider.'
-    return render_template('form.html')
+# Definir la función de scraping fuera de ejecutar_scrapy
+def run_scrapy(url, output_dir):
+    process = CrawlerProcess()
+    # Modificar el spider para que guarde el archivo en output_dir
+    process.crawl(EnlacesSpider, url=url, output_dir=output_dir)
+    process.start()
+
+# Ruta para ejecutar el scraping
+@app.route('/scraping', methods=['POST'])
+def ejecutar_scrapy():
+    url = request.form.get('url')
+    if not url:
+        return jsonify({'error': 'Por favor, ingresa una URL válida.'})
+
+    # Asegurarnos de que el directorio de salida exista
+    output_dir = os.path.join(os.getcwd(), 'output')
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Usar multiprocessing para crear un nuevo proceso para el scraping
+    p = Process(target=run_scrapy, args=(url, output_dir))
+    p.start()
+    p.join()  # Asegúrate de que el proceso termine antes de continuar
+
+    # Ruta completa del archivo generado
+    file_path = os.path.join(output_dir, 'enlaces_extraidos.xlsx')
+
+    if not os.path.exists(file_path):
+        return jsonify({'error': 'Hubo un error al generar el archivo.'})
+
+    # Enviar el archivo al usuario para que lo descargue
+    return send_file(file_path, as_attachment=True, download_name='enlaces_extraidos.xlsx')
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))  # Use the PORT env variable or 5000 by default
-    app.run(debug=True, host='0.0.0.0', port=port)
+    app.run(debug=True)
