@@ -61,5 +61,9 @@ def ejecutar_scrapy():
     # Enviar el archivo al usuario para que lo descargue
     return send_file(file_path, as_attachment=True, download_name='enlaces_extraidos.xlsx')
 
+
+
+
+
 if __name__ == '__main__':
     app.run(debug=True)
