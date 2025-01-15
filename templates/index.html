@@ -1,106 +1,81 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ejecutor de Scripts</title>
+    <title>Multi-Script App</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-        }
         .tabs {
             display: flex;
             cursor: pointer;
             margin-bottom: 20px;
         }
         .tab {
-            padding: 10px 20px;
-            border: 1px solid #ccc;
-            border-bottom: none;
-            background: #f1f1f1;
+            flex: 1;
+            padding: 10px;
+            text-align: center;
+            background: #f0f0f0;
+            border: 1px solid #ddd;
         }
         .tab.active {
-            background: #fff;
-            border-top: 2px solid #007BFF;
+            background: #ddd;
+            font-weight: bold;
         }
         .content {
-            border: 1px solid #ccc;
-            padding: 20px;
-            background: #fff;
-        }
-        .content > div {
             display: none;
         }
-        .content > div.active {
+        .content.active {
             display: block;
         }
     </style>
+    <script>
+        function showTab(tabIndex) {
+            const tabs = document.querySelectorAll('.tab');
+            const contents = document.querySelectorAll('.content');
+            tabs.forEach((tab, index) => {
+                tab.classList.toggle('active', index === tabIndex);
+                contents[index].classList.toggle('active', index === tabIndex);
+            });
+        }
+    </script>
 </head>
 <body>
-    <h1>Ejecutor de Scripts</h1>
-
+    <h1>Aplicación Multi-Script</h1>
     <div class="tabs">
-        <div class="tab active" data-target="tab-scraping">Scraper de Enlaces</div>
-        <div class="tab" data-target="tab-fusion">Fusionar y Analizar</div>
-        <div class="tab" data-target="tab-futuro">Futuras Funcionalidades</div>
+        <div class="tab active" onclick="showTab(0)">Fusionar y Analizar</div>
+        <div class="tab" onclick="showTab(1)">Scraping</div>
+    </div>
+
+    <div class="content active">
+        <h2>Fusionar y Analizar Archivos</h2>
+        <form action="/process" method="POST" enctype="multipart/form-data">
+            <label for="screaming_file">Archivo Screaming Frog (XLSX):</label>
+            <input type="file" id="screaming_file" name="screaming_file" accept=".xlsx" required><br><br>
+
+            <label for="sistrix_file">Archivo Sistrix (CSV):</label>
+            <input type="file" id="sistrix_file" name="sistrix_file" accept=".csv" required><br><br>
+
+            <label for="url_base">URL Base:</label>
+            <input type="text" id="url_base" name="url_base" required><br><br>
+
+            <label for="slug_productos">Slug Productos:</label>
+            <input type="text" id="slug_productos" name="slug_productos"><br><br>
+
+            <label for="taxonomias">Taxonomías (separadas por comas):</label>
+            <textarea id="taxonomias" name="taxonomias" rows="5" cols="40"></textarea><br><br>
+
+            <button type="submit">Procesar Archivos</button>
+        </form>
     </div>
 
     <div class="content">
-        <!-- Tab 1: Scraper de Enlaces -->
-        <div id="tab-scraping" class="active">
-            <h2>Scraper de Enlaces</h2>
-            <form action="/scraping" method="POST">
-                <label for="url">Ingresa la URL para realizar scraping:</label>
-                <input type="text" id="url" name="url" required>
-                <button type="submit">Iniciar Scraping</button>
-            </form>
-        </div>
+        <h2>Scraping de Enlaces</h2>
+        <form action="/scrape" method="POST">
+            <label for="url">URL:</label>
+            <input type="text" id="url" name="url" placeholder="https://ejemplo.com" required><br><br>
 
-        <!-- Tab 2: Fusionar y Analizar -->
-        <div id="tab-fusion">
-            <h2>Fusionar y Analizar</h2>
-            <form action="/fusionar" method="POST" enctype="multipart/form-data">
-                <label for="screaming">Archivo Screaming Frog (xlsx):</label>
-                <input type="file" id="screaming" name="screaming" accept=".xlsx" required><br><br>
-
-                <label for="sistrix">Archivo Sistrix (csv):</label>
-                <input type="file" id="sistrix" name="sistrix" accept=".csv" required><br><br>
-
-                <label for="url_base">URL Base:</label>
-                <input type="text" id="url_base" name="url_base" required><br><br>
-
-                <label for="slug_productos">Slug Productos:</label>
-                <input type="text" id="slug_productos" name="slug_productos"><br><br>
-
-                <label for="taxonomias">Taxonomías (separadas por comas):</label><br>
-                <textarea id="taxonomias" name="taxonomias" rows="4" cols="50"></textarea><br><br>
-
-                <button type="submit">Fusionar y Analizar</button>
-            </form>
-        </div>
-
-        <!-- Tab 3: Futuras Funcionalidades -->
-        <div id="tab-futuro">
-            <h2>Futuras Funcionalidades</h2>
-            <p>Este espacio está reservado para futuros formularios o herramientas.</p>
-        </div>
+            <button type="submit">Iniciar Scraping</button>
+        </form>
     </div>
-
-    <script>
-        const tabs = document.querySelectorAll('.tab');
-        const contents = document.querySelectorAll('.content > div');
-
-        tabs.forEach(tab => {
-            tab.addEventListener('click', () => {
-                // Remove active class from all tabs and contents
-                tabs.forEach(t => t.classList.remove('active'));
-                contents.forEach(c => c.classList.remove('active'));
-
-                // Add active class to the selected tab and corresponding content
-                tab.classList.add('active');
-                document.getElementById(tab.dataset.target).classList.add('active');
-            });
-        });
-    </script>
 </body>
 </html>
