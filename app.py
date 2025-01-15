@@ -1,69 +1,153 @@
-from flask import Flask, render_template, request, jsonify, send_file
-import subprocess
-import sys
+# app.py
 import os
-from multiprocessing import Process
+import re
+from flask import Flask, render_template, request, send_file
+from werkzeug.utils import secure_filename
+import pandas as pd
+from urllib.parse import urlparse
+import scrapy
 from scrapy.crawler import CrawlerProcess
-from spider import EnlacesSpider  # Importamos el Spider desde spider.py
-import tempfile
-import shutil
 
-# Función para comprobar e instalar paquetes
-def check_and_install(package):
-    try:
-        __import__(package)
-    except ImportError:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-
-# Verificar que dependencias necesarias están instaladas
-check_and_install("scrapy")
-check_and_install("pandas")
-check_and_install("openpyxl")
-
-# Crear la aplicación Flask
 app = Flask(__name__)
 
-# Ruta principal
+# Carpetas para subir y guardar archivos
+UPLOAD_FOLDER = 'uploads'
+RESULT_FOLDER = 'results'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(RESULT_FOLDER, exist_ok=True)
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['RESULT_FOLDER'] = RESULT_FOLDER
+
+# Ruta de la página principal
 @app.route('/')
 def index():
-    return render_template('index.html')  # Crear un archivo HTML básico para la interfaz
+    return render_template('index.html')
 
-# Definir la función de scraping fuera de ejecutar_scrapy
-def run_scrapy(url, output_dir):
+# Ruta para manejar el formulario del primer script
+@app.route('/process', methods=['POST'])
+def process():
+    try:
+        # Obtener archivos subidos
+        screaming_file = request.files['screaming_file']
+        sistrix_file = request.files['sistrix_file']
+        url_base = request.form['url_base']
+        slug_productos = request.form['slug_productos']
+        taxonomias = [tax.strip() for tax in request.form['taxonomias'].split(',') if tax.strip()]
+
+        # Guardar archivos subidos
+        screaming_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(screaming_file.filename))
+        sistrix_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(sistrix_file.filename))
+
+        screaming_file.save(screaming_path)
+        sistrix_file.save(sistrix_path)
+
+        # Procesar archivos
+        result_path = fusionar_y_analizar(screaming_path, sistrix_path, url_base, slug_productos, taxonomias)
+
+        return send_file(result_path, as_attachment=True)
+
+    except Exception as e:
+        return f"Ocurrió un error: {str(e)}"
+
+# Función para fusionar y analizar archivos
+def fusionar_y_analizar(screaming_path, sistrix_path, url_base, slug_productos, taxonomias):
+    df_screaming = pd.read_excel(screaming_path, engine='openpyxl')
+    df_sistrix = pd.read_csv(sistrix_path, sep=';', encoding='utf-8-sig')
+
+    # Fusionar archivos
+    df_merged = pd.merge(df_screaming, df_sistrix, left_on="Dirección", right_on="URL", how="left")
+
+    # Filtrar contenido no deseado
+    columnas_requeridas = ['Dirección', 'Tipo de contenido', 'Código de respuesta', 'Indexabilidad', 
+                           'Título 1', 'Meta description 1', 'H1-1', 'GA4 Sessions', 'GA4 Views', 
+                           'Palabra clave principal', 'Top-10', 'Top-100', 'Cuota de visibilidad', 'Clics', 'Impresiones']
+    columnas_existentes = [col for col in columnas_requeridas if col in df_merged.columns]
+    df_merged = df_merged[columnas_existentes]
+
+    recursos = df_merged[df_merged['Tipo de contenido'].isin(['text/css', 'text/javascript', 'font/opentype', 
+                                                             'application/x-font-woff2', 'application/javascript'])]
+    df_merged.drop(recursos.index, inplace=True)
+
+    imagenes = df_merged[df_merged['Tipo de contenido'].isin(['image/jpeg', 'image/png', 'application/pdf', 
+                                                             'image/svg+xml', 'image/webp']) | 
+                          df_merged['Dirección'].str.contains(r'\.png|\.jpg|\.svg|\.webp|\.jpeg', na=False)]
+    df_merged.drop(imagenes.index, inplace=True)
+
+    parametros = df_merged[df_merged['Dirección'].str.contains(r'[?=]', na=False)]
+    df_merged.drop(parametros.index, inplace=True)
+
+    http = df_merged[df_merged['Dirección'].str.startswith("http://", na=False)]
+    df_merged.drop(http.index, inplace=True)
+
+    productos = df_merged[df_merged['Dirección'].str.startswith(url_base) & df_merged['Dirección'].str.contains(slug_productos, na=False)]
+    df_merged.drop(productos.index, inplace=True)
+
+    tax_todas = pd.DataFrame()
+    taxonomias_filtradas = {}
+    for taxonomia in taxonomias:
+        tax = df_merged[df_merged['Dirección'].str.startswith(url_base) & df_merged['Dirección'].str.contains(taxonomia, na=False)]
+        taxonomias_filtradas[taxonomia] = tax
+        tax_todas = pd.concat([tax_todas, tax], ignore_index=True)
+        df_merged.drop(tax.index, inplace=True)
+
+    # Guardar resultados
+    result_path = os.path.join(app.config['RESULT_FOLDER'], 'resultado.xlsx')
+    with pd.ExcelWriter(result_path) as writer:
+        df_merged.to_excel(writer, sheet_name='General', index=False)
+        productos.to_excel(writer, sheet_name='Productos', index=False)
+        http.to_excel(writer, sheet_name='Http', index=False)
+        parametros.to_excel(writer, sheet_name='Parametros', index=False)
+        imagenes.to_excel(writer, sheet_name='Imagenes', index=False)
+        recursos.to_excel(writer, sheet_name='Recursos', index=False)
+
+        for taxonomia, data in taxonomias_filtradas.items():
+            sheet_name = re.sub(r'[\/:*?"<>|]', '_', taxonomia)
+            data.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    return result_path
+
+# Ruta para manejar el formulario del segundo script
+@app.route('/scrape', methods=['POST'])
+def scrape():
+    try:
+        url = request.form['url']
+        if not url:
+            return "Por favor, proporciona una URL válida."
+
+        # Ejecutar el scraper
+        result_path = run_scraper(url)
+
+        return send_file(result_path, as_attachment=True)
+
+    except Exception as e:
+        return f"Ocurrió un error: {str(e)}"
+
+# Función para ejecutar el scraper
+def run_scraper(url):
+    class EnlacesSpider(scrapy.Spider):
+        name = 'enlaces'
+        start_urls = [url]
+        all_data = []
+
+        def parse(self, response):
+            for enlace in response.css('a'):
+                href = enlace.css('::attr(href)').get()
+                texto = enlace.css('::text').get()
+                if href and not href.startswith('http'):
+                    href = response.urljoin(href)
+                self.all_data.append({'origen': response.url, 'url': href, 'texto': texto.strip() if texto else ''})
+
+        def closed(self, reason):
+            df = pd.DataFrame(self.all_data)
+            result_path = os.path.join(RESULT_FOLDER, 'enlaces_extraidos.xlsx')
+            df.to_excel(result_path, index=False, engine='openpyxl')
+
     process = CrawlerProcess()
-    # Modificar el spider para que guarde el archivo en output_dir
-    process.crawl(EnlacesSpider, url=url, output_dir=output_dir)
+    process.crawl(EnlacesSpider)
     process.start()
 
-# Ruta para ejecutar el scraping
-@app.route('/scraping', methods=['POST'])
-def ejecutar_scrapy():
-    url = request.form.get('url')
-    if not url:
-        return jsonify({'error': 'Por favor, ingresa una URL válida.'})
-
-    # Asegurarnos de que el directorio de salida exista
-    output_dir = os.path.join(os.getcwd(), 'output')
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
-    # Usar multiprocessing para crear un nuevo proceso para el scraping
-    p = Process(target=run_scrapy, args=(url, output_dir))
-    p.start()
-    p.join()  # Asegúrate de que el proceso termine antes de continuar
-
-    # Ruta completa del archivo generado
-    file_path = os.path.join(output_dir, 'enlaces_extraidos.xlsx')
-
-    if not os.path.exists(file_path):
-        return jsonify({'error': 'Hubo un error al generar el archivo.'})
-
-    # Enviar el archivo al usuario para que lo descargue
-    return send_file(file_path, as_attachment=True, download_name='enlaces_extraidos.xlsx')
-
-
-
-
+    return os.path.join(RESULT_FOLDER, 'enlaces_extraidos.xlsx')
 
 if __name__ == '__main__':
     app.run(debug=True)
